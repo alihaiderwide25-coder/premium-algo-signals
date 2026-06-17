@@ -1,0 +1,77 @@
+//@version=5
+indicator('Premium Algo - ALERT READY', overlay=true)
+
+// --- Inputs ---
+showIndicator = input.bool(true, "Show Indicator")
+enableRiskManagement = input.bool(true, "Enable Risk Management")
+trailingATRMult = input.float(1.5, "ATR Multiplier for SL", minval=0.1)
+
+// --- Hardcoded ---
+lenRevBands = 30
+multTP1 = 0.5
+multTP2 = 1.0
+multTP3 = 1.5
+
+// --- Reversal Bands ---
+f_kc(src, len, sensitivity) =>
+    basis = ta.sma(src, len)
+    span  = ta.atr(len)
+    [basis + span * sensitivity, basis - span * sensitivity]
+
+[upperKC2, lowerKC2] = f_kc(close, lenRevBands, 4)
+
+// --- Signals ---
+buySignal  = ta.crossover(close, lowerKC2)
+sellSignal = ta.crossunder(close, upperKC2)
+
+// --- Risk Management ---
+newTrade = buySignal or sellSignal
+var float entryPrice = na
+var float stopLoss = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var bool inTrade = false
+var bool isBullTrade = false
+
+atr = ta.atr(14)
+initialTrailBuffer = atr * trailingATRMult
+
+slHit = inTrade and ((isBullTrade and close <= stopLoss) or (not isBullTrade and close >= stopLoss))
+tp1Hit = inTrade and ((isBullTrade and close >= tp1) or (not isBullTrade and close <= tp1))
+tp2Hit = inTrade and ((isBullTrade and close >= tp2) or (not isBullTrade and close <= tp2))
+tp3Hit = inTrade and ((isBullTrade and close >= tp3) or (not isBullTrade and close <= tp3))
+
+if slHit or tp3Hit
+    inTrade := false
+
+if newTrade and enableRiskManagement
+    entryPrice := close
+    stopLoss := buySignal ? low - initialTrailBuffer : high + initialTrailBuffer
+    tp1 := buySignal ? entryPrice + (entryPrice - stopLoss) * multTP1 : entryPrice - (stopLoss - entryPrice) * multTP1
+    tp2 := buySignal ? entryPrice + (entryPrice - stopLoss) * multTP2 : entryPrice - (stopLoss - entryPrice) * multTP2
+    tp3 := buySignal ? entryPrice + (entryPrice - stopLoss) * multTP3 : entryPrice - (stopLoss - entryPrice) * multTP3
+    inTrade := true
+    isBullTrade := buySignal
+
+// ═══════════════════════════════════════════════════════════════
+//   ALERTS - JSON FORMAT FOR WEBHOOK
+// ═══════════════════════════════════════════════════════════════
+
+// BUY Alert
+alertcondition(buySignal, title="PREMIUM ALGO BUY", 
+     message='{"symbol":"{{ticker}}","action":"BUY","entry":"{{close}}","sl":"' + str.tostring(buySignal ? low - initialTrailBuffer : na) + '","tp1":"' + str.tostring(buySignal ? close + (close - (low - initialTrailBuffer)) * 0.5 : na) + '","tp2":"' + str.tostring(buySignal ? close + (close - (low - initialTrailBuffer)) * 1.0 : na) + '","tp3":"' + str.tostring(buySignal ? close + (close - (low - initialTrailBuffer)) * 1.5 : na) + '","timeframe":"{{interval}}","time":"{{timenow}}"}')
+
+// SELL Alert
+alertcondition(sellSignal, title="PREMIUM ALGO SELL", 
+     message='{"symbol":"{{ticker}}","action":"SELL","entry":"{{close}}","sl":"' + str.tostring(sellSignal ? high + initialTrailBuffer : na) + '","tp1":"' + str.tostring(sellSignal ? close - ((high + initialTrailBuffer) - close) * 0.5 : na) + '","tp2":"' + str.tostring(sellSignal ? close - ((high + initialTrailBuffer) - close) * 1.0 : na) + '","tp3":"' + str.tostring(sellSignal ? close - ((high + initialTrailBuffer) - close) * 1.5 : na) + '","timeframe":"{{interval}}","time":"{{timenow}}"}')
+
+// TP/SL Updates
+alertcondition(tp1Hit, title="TP1 HIT", message='{"symbol":"{{ticker}}","action":"UPDATE","type":"TP1_HIT"}')
+alertcondition(tp2Hit, title="TP2 HIT", message='{"symbol":"{{ticker}}","action":"UPDATE","type":"TP2_HIT"}')
+alertcondition(tp3Hit, title="TP3 HIT", message='{"symbol":"{{ticker}}","action":"UPDATE","type":"TP3_HIT"}')
+alertcondition(slHit, title="SL HIT", message='{"symbol":"{{ticker}}","action":"UPDATE","type":"SL_HIT"}')
+
+// Plot
+plotshape(buySignal and showIndicator, title="Buy", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal, text="BUY")
+plotshape(sellSignal and showIndicator, title="Sell", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal, text="SELL")
